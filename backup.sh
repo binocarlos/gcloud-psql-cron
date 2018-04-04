@@ -1,15 +1,26 @@
 #!/bin/bash -e
 
 set -e
+set -x
 
-FILENAME=$(date +"%m-%d-%y-%T")
-FILEPATH="/${FILENAME}.sql"
+PGPASSWORD=${POSTGRES_SERVICE_PASSWORD} \
+    pg_dump -h ${POSTGRES_SERVICE_HOST} \
+    -U ${POSTGRES_SERVICE_USER} ${POSTGRES_SERVICE_DATABASE} > backup.sql
 
-echo "creating ${FILEPATH}"
-PGPASSWORD=${POSTGRES_SERVICE_PASSWORD} pg_dump -h ${POSTGRES_SERVICE_HOST} -U ${POSTGRES_SERVICE_USER} ${POSTGRES_SERVICE_DATABASE} > ${FILEPATH}
+HASH=$(sha1sum backup.sql | cut -f 1 -d ' ')
 
-echo "compressing ${FILEPATH}"
-gzip ${FILEPATH}
+echo "Generated backup with SHA1: $HASH"
 
-echo "uploading ${FILEPATH}.gz to gs://${SERVICE_ACCOUNT_STORAGE_BUCKET}"
-gsutil cp ${FILEPATH}.gz gs://${SERVICE_ACCOUNT_STORAGE_BUCKET}
+if gsutil ls gs://${SERVICE_ACCOUNT_STORAGE_BUCKET}/*${HASH}* ; then
+    echo "Backup with same SHA1 already exists. Will not copy."
+else
+    echo "No existing backup with this SHA1. Copying."
+
+    gzip -f backup.sql
+    FILENAME=$(date +"%m-%d-%y-%T").${HASH}.sql.gz
+    DEST=gs://${SERVICE_ACCOUNT_STORAGE_BUCKET}/$FILENAME
+
+    echo "Uploading backup.sql.gz to $DEST"
+    gsutil cp backup.sql.gz $DEST
+    echo "Done"
+fi
